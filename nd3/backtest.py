@@ -9,25 +9,23 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-SHARES = 100  # shares bought on every buy
-FEE = 5  # $ paid for every buy and every sell (set to 1000 to see the drops on the profit chart)
-BARS_PER_YEAR = 252 * 8  # 252 trading days, 8 hourly bars per day
+SHARES = 100  # how many shares I buy each time
+FEE = 5  # $ for every buy and every sell, with 1000 the drops on the profit chart are easy to see
+BARS_PER_YEAR = 252 * 8  # about 252 trading days with 8 hourly bars each
 
 
 def load_data(filename):
     df = pd.read_csv(filename, sep="\t")
-    # MT5 column names look like <CLOSE>, so remove the brackets
-    df.columns = [c.strip("<>").lower() for c in df.columns]
-    df["time"] = pd.to_datetime(df["date"] + " " + df["time"])
-    return df.set_index("time")
+    df.index = pd.to_datetime(df["<DATE>"] + " " + df["<TIME>"])
+    return df
 
 
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
 
 
-# Returns the profit curve and the list of trades (time, price, reason).
-# A signal is taken at the bar's close, so the new position earns from the next bar.
+# I decide at the close of a bar, so a new position only starts earning from the next bar.
+# Returns the cumulative profit and a list of trades (time, price, reason).
 def backtest(close, fast, slow, sl_pct, tp_pct):
     fast_ema = ema(close, fast)
     slow_ema = ema(close, slow)
@@ -35,18 +33,19 @@ def backtest(close, fast, slow, sl_pct, tp_pct):
     sell = (fast_ema < slow_ema) & (fast_ema.shift() >= slow_ema.shift())
 
     prices = close.tolist()
-    position = 0  # 1 = holding SHARES shares, 0 = no shares
-    entry = 0  # price of the last buy
+    position = 0  # 1 = I hold the shares, 0 = I don't
+    entry = 0
     profit = [0]
     trades = []
 
     for i in range(1, len(prices)):
         bar_profit = position * SHARES * (prices[i] - prices[i - 1])
 
-        # buy signals are ignored while holding and sell signals while not holding,
-        # so trades always go buy, sell, buy, sell
+        # a buy signal means nothing if I already hold the shares, and a sell signal
+        # if I don't, so the trades always go buy, sell, buy, sell
         reason = None
         if position == 1:
+            # stop loss and take profit are counted from this trade's own buy price
             if prices[i] <= entry * (1 - sl_pct):
                 reason = "stop loss"
             elif prices[i] >= entry * (1 + tp_pct):
@@ -69,17 +68,16 @@ def backtest(close, fast, slow, sl_pct, tp_pct):
     return profit, trades
 
 
-# Sharpe ratio = average profit per bar / standard deviation of profit per bar,
-# multiplied by sqrt(bars per year) to make it yearly.
-# It shows how much profit the strategy makes per unit of risk (volatility). Higher is better.
+# Sharpe ratio shows how much profit I get for the risk I take: the average profit per bar
+# divided by how much it jumps around (std). Times sqrt(bars per year) to get a yearly value.
 def sharpe(profit):
     returns = profit.diff().dropna()
-    if returns.std() == 0:
+    if returns.std() == 0:  # no trades at all
         return 0
     return returns.mean() / returns.std() * np.sqrt(BARS_PER_YEAR)
 
 
-# Brute force: tries every combination from param_grid and keeps the one with the best objective
+# Brute force: run the strategy with every combination and keep the best one
 def optimize(objective, param_grid, close):
     best_params = None
     best_score = -np.inf
@@ -131,7 +129,7 @@ def plot_trades(close, trades, params, name):
     plt.show()
 
 
-# profits is a dict {label: profit curve}, so one or several curves can be drawn
+# takes a dict {label: profit}, so I can draw one curve or compare a few
 def plot_profit(profits, close, title):
     fig, ax1 = plt.subplots(figsize=(12, 6))
     for label, profit in profits.items():
@@ -140,6 +138,7 @@ def plot_profit(profits, close, title):
     ax1.set_ylabel("Profit ($)")
     ax1.legend(loc="upper left")
 
+    # price on a second axis, because it's in a different range than the profit
     ax2 = ax1.twinx()
     ax2.plot(close, color="gray", alpha=0.4, label="AMD close price")
     ax2.set_ylabel("Price ($)")
@@ -158,14 +157,14 @@ def run(close, params, name):
     return profit
 
 
-close = load_data("AMD_H1_202510271500_202610232300.csv")["close"]
+close = load_data("AMD_H1_202510271500_202610232300.csv")["<CLOSE>"]
 print("AMD hourly bars:", len(close), "from", close.index[0], "to", close.index[-1])
 
-# 1. strategy with parameters chosen by hand
+# 1. strategy with parameters I picked myself
 default_params = {"fast": 12, "slow": 26, "sl_pct": 0.03, "tp_pct": 0.06}
 default_profit = run(close, default_params, "Default parameters")
 
-# 2. optimisation (the default parameters are in the grid, so the result can't be worse)
+# 2. optimisation, the default parameters are in the grid too, so the result can't get worse
 param_grid = {
     "fast": [5, 8, 12, 16, 20],
     "slow": [26, 40, 60, 80, 100],
