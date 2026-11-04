@@ -104,28 +104,38 @@ def print_results(profit, trades, params, name):
     print(f"Sharpe ratio (yearly): {sharpe(profit):.2f}")
 
 
+# triangle up = buy, triangle down = sell, the colour shows why it happened
 MARKERS = {
     "EMA buy": ("^", "green", "Buy: fast EMA crossed above slow EMA"),
     "EMA sell": ("v", "red", "Sell: fast EMA crossed below slow EMA"),
-    "stop loss": ("x", "black", "Sell: stop loss hit"),
-    "take profit": ("*", "orange", "Sell: take profit hit"),
+    "stop loss": ("v", "black", "Sell: stop loss hit"),
+    "take profit": ("v", "dodgerblue", "Sell: take profit hit"),
 }
 
 
-def plot_trades(close, trades, params, name):
-    plt.figure(figsize=(12, 6))
-    plt.plot(close, color="gray", label="Close")
-    plt.plot(ema(close, params["fast"]), label=f"EMA({params['fast']})")
-    plt.plot(ema(close, params["slow"]), label=f"EMA({params['slow']})")
-    for reason, (marker, color, label) in MARKERS.items():
-        points = [t for t in trades if t[2] == reason]
-        plt.scatter([t[0] for t in points], [t[1] for t in points],
-                    marker=marker, color=color, s=60, zorder=3, label=label)
-    plt.title(name + ": trades")
-    plt.xlabel("Date")
-    plt.ylabel("Price ($)")
-    plt.legend()
-    plt.tight_layout()
+# one year on one chart is too crowded, so I split it into a few periods, one under another
+def plot_trades(close, trades, params, name, parts=4):
+    fast_ema = ema(close, params["fast"])
+    slow_ema = ema(close, params["slow"])
+    fig, axes = plt.subplots(parts, 1, figsize=(14, 4 * parts))
+    fig.suptitle(name + ": trades")
+
+    for ax, period in zip(axes, np.array_split(close.index, parts)):
+        start, end = period[0], period[-1]
+        ax.plot(close[start:end], color="gray", label="Close")
+        ax.plot(fast_ema[start:end], linewidth=1, label=f"EMA({params['fast']})")
+        ax.plot(slow_ema[start:end], linewidth=1, label=f"EMA({params['slow']})")
+        for reason, (marker, color, label) in MARKERS.items():
+            points = [t for t in trades if t[2] == reason and start <= t[0] <= end]
+            ax.scatter([t[0] for t in points], [t[1] for t in points],
+                       marker=marker, color=color, s=80, zorder=3, label=label)
+        ax.set_ylabel("Price ($)")
+
+    # one legend above all periods, so it doesn't cover any trades
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="upper center",
+               bbox_to_anchor=(0.5, 0.965), ncol=4)
+    axes[-1].set_xlabel("Date")
+    plt.tight_layout(rect=(0, 0, 1, 0.935))
     plt.show()
 
 
